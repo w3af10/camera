@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Logs</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'DM Sans',sans-serif;min-height:100vh;background:#08080d;color:#c8cad0;padding:24px}
+        .header{max-width:960px;margin:0 auto 32px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px}
+        h1{font-family:'Space Mono',monospace;font-size:1.3rem;color:#eef0f4;letter-spacing:-.5px}
+        .header-right{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .count{font-family:'Space Mono',monospace;font-size:.8rem;color:#555869;background:rgba(255,255,255,.04);padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.06)}
+        .btn-sm{padding:8px 18px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#a5b4fc;font-family:'DM Sans',sans-serif;font-size:.82rem;font-weight:600;cursor:pointer;transition:all .2s;text-decoration:none}
+        .btn-sm:hover{background:rgba(255,255,255,.07);color:#c7d2fe}
+        .btn-danger{border-color:rgba(239,68,68,.2);color:#f87171}
+        .btn-danger:hover{background:rgba(239,68,68,.1)}
+
+        .grid{max-width:960px;margin:0 auto;display:grid;gap:14px}
+
+        .log-card{background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:20px 24px;transition:all .3s;animation:fadeUp .4s ease backwards}
+        .log-card:hover{border-color:rgba(56,100,220,.2);background:rgba(255,255,255,.04)}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+        .log-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+        .log-num{font-family:'Space Mono',monospace;font-size:1rem;font-weight:700;color:#3864dc;background:rgba(56,100,220,.08);padding:6px 14px;border-radius:10px;display:inline-flex;align-items:center;gap:6px}
+        .log-time{font-family:'Space Mono',monospace;font-size:.72rem;color:#3a3d48}
+
+        .log-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+        .log-field{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.03);border-radius:10px;padding:10px 14px}
+        .log-field-label{font-size:.68rem;color:#555869;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+        .log-field-value{font-family:'Space Mono',monospace;font-size:.8rem;color:#eef0f4;font-weight:700;word-break:break-all}
+
+        .log-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+        .map-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:8px;background:rgba(56,100,220,.08);border:1px solid rgba(56,100,220,.15);color:#7c9bf7;font-size:.75rem;font-weight:600;text-decoration:none;transition:all .2s;white-space:nowrap}
+        .map-btn:hover{background:rgba(56,100,220,.15);color:#a5b4fc}
+        .map-btn.gps{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.15);color:#4ade80}
+        .map-btn.gps:hover{background:rgba(34,197,94,.15)}
+
+        .tag{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:.65rem;font-weight:600}
+        .tag-ip{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.15);color:#fbbf24}
+        .tag-gps{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.15);color:#4ade80}
+
+        .empty{text-align:center;padding:80px 20px;color:#3a3d48}
+        .empty p{font-size:.95rem}
+        .raw-link{display:block;text-align:center;margin-top:32px;color:#3a3d48;font-size:.75rem;text-decoration:none}
+        .raw-link:hover{color:#555869}
+        .loading-spinner{display:flex;justify-content:center;padding:60px}
+        .loading-spinner::after{content:'';width:32px;height:32px;border:3px solid rgba(255,255,255,.06);border-top-color:#3864dc;border-radius:50%;animation:spin .8s linear infinite}
+        @keyframes spin{to{transform:rotate(360deg)}}
+
+        @media(max-width:600px){
+            .log-grid{grid-template-columns:1fr 1fr}
+            body{padding:14px}
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📡 Painel de Logs</h1>
+        <div class="header-right">
+            <span class="count" id="count">—</span>
+            <button class="btn-sm" onclick="loadLogs()">↻ Atualizar</button>
+            <a class="btn-sm" href="/log.json" target="_blank">{ } JSON</a>
+            <button class="btn-sm btn-danger" onclick="clearLogs()">🗑 Limpar</button>
+        </div>
+    </div>
+
+    <div class="grid" id="grid">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <a class="raw-link" href="/log.json" target="_blank">Ver dados brutos em /log.json</a>
+
+    <script>
+        async function loadLogs() {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '<div class="loading-spinner"></div>';
+
+            try {
+                const res = await fetch('/log.json');
+                const logs = await res.json();
+
+                document.getElementById('count').textContent = `${logs.length} registro${logs.length !== 1 ? 's' : ''}`;
+
+                if (logs.length === 0) {
+                    grid.innerHTML = '<div class="empty"><p>Nenhum log registrado ainda.</p></div>';
+                    return;
+                }
+
+                grid.innerHTML = logs.slice().reverse().map((log, i) => {
+                    const date = new Date(log.timestamp);
+                    const formatted = date.toLocaleString('pt-BR');
+                    const ago = timeAgo(date);
+                    const hasGPS = log.gps_latitude !== undefined;
+
+                    return `
+                    <div class="log-card" style="animation-delay:${i * 0.04}s">
+                        <div class="log-top">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                <span class="log-num">#${log.id}</span>
+                                <span class="tag tag-ip">📡 IP</span>
+                                ${hasGPS ? '<span class="tag tag-gps">📍 GPS</span>' : ''}
+                            </div>
+                            <span class="log-time">${formatted} · ${ago}</span>
+                        </div>
+                        <div class="log-grid">
+                            ${field('Cidade', log.cidade)}
+                            ${field('Estado', log.estado)}
+                            ${field('País', log.pais)}
+                            ${field('CEP', log.cep)}
+                            ${field('IP', log.ip)}
+                            ${field('Provedor', log.provedor)}
+                            ${field('Lat (IP)', log.latitude)}
+                            ${field('Lon (IP)', log.longitude)}
+                            ${hasGPS ? field('Lat (GPS)', log.gps_latitude?.toFixed(6)) : ''}
+                            ${hasGPS ? field('Lon (GPS)', log.gps_longitude?.toFixed(6)) : ''}
+                            ${hasGPS ? field('Precisão GPS', `±${Math.round(log.gps_precisao || 0)}m`) : ''}
+                            ${field('Fuso', log.fuso_horario)}
+                            ${field('Idioma', log.idioma)}
+                        </div>
+                        <div class="log-actions">
+                            ${log.google_maps ? `<a class="map-btn" href="${log.google_maps}" target="_blank">📡 Maps (IP)</a>` : ''}
+                            ${log.google_maps_gps ? `<a class="map-btn gps" href="${log.google_maps_gps}" target="_blank">📍 Maps (GPS)</a>` : ''}
+                        </div>
+                    </div>`;
+                }).join('');
+
+            } catch (err) {
+                grid.innerHTML = '<div class="empty"><p>Erro ao carregar logs.</p></div>';
+            }
+        }
+
+        function field(label, value) {
+            if (!value && value !== 0) return '';
+            return `<div class="log-field"><div class="log-field-label">${label}</div><div class="log-field-value">${value}</div></div>`;
+        }
+
+        async function clearLogs() {
+            if (!confirm('Apagar todos os logs?')) return;
+            await fetch('/api/log', { method: 'DELETE' });
+            loadLogs();
+        }
+
+        function timeAgo(date) {
+            const s = Math.floor((Date.now() - date) / 1000);
+            if (s < 60) return 'agora';
+            if (s < 3600) return `${Math.floor(s / 60)}min atrás`;
+            if (s < 86400) return `${Math.floor(s / 3600)}h atrás`;
+            return `${Math.floor(s / 86400)}d atrás`;
+        }
+
+        loadLogs();
+        setInterval(loadLogs, 10000);
+    </script>
+</body>
+</html>
