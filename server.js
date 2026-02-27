@@ -17,22 +17,44 @@ if (!fs.existsSync(LOG_FILE)) {
 }
 
 // =============================================
-//  Função para buscar localização pelo IP
-//  Usa a API gratuita ip-api.com
+//  Busca localização pelo IP — 3 APIs de fallback
 // =============================================
 async function getLocationByIP(ip) {
+    let cleanIP = ip.replace('::ffff:', '').replace('::1', '').replace('127.0.0.1', '');
+
+    // Se for IP local/privado, retorna só o IP
+    if (!cleanIP || cleanIP.startsWith('10.') || cleanIP.startsWith('192.168.') || cleanIP.startsWith('172.')) {
+        return { ip: ip, erro: 'IP local/privado' };
+    }
+
+    // TENTATIVA 1: ipapi.co (grátis, 1000/dia)
     try {
-        let cleanIP = ip.replace('::ffff:', '').replace('::1', '').replace('127.0.0.1', '');
-
-        if (!cleanIP || cleanIP === 'localhost') {
-            const pubRes = await fetch('https://api.ipify.org?format=json');
-            const pubData = await pubRes.json();
-            cleanIP = pubData.ip;
-        }
-
-        const res = await fetch(`http://ip-api.com/json/${cleanIP}?fields=status,message,country,regionName,city,zip,lat,lon,timezone,isp,query&lang=pt`);
+        const res = await fetch(`https://ipapi.co/${cleanIP}/json/`, {
+            headers: { 'User-Agent': 'geo-logger/2.0' }
+        });
         const data = await res.json();
+        if (data.latitude) {
+            return {
+                ip: data.ip || cleanIP,
+                latitude: data.latitude,
+                longitude: data.longitude,
+                cidade: data.city,
+                estado: data.region,
+                pais: data.country_name,
+                cep: data.postal,
+                fuso_horario: data.timezone,
+                provedor: data.org,
+                google_maps: `https://www.google.com/maps?q=${data.latitude},${data.longitude}`
+            };
+        }
+    } catch (e) {
+        console.log('[API 1] ipapi.co falhou:', e.message);
+    }
 
+    // TENTATIVA 2: ip-api.com (grátis, sem limite, só HTTP)
+    try {
+        const res = await fetch(`http://ip-api.com/json/${cleanIP}?fields=status,country,regionName,city,zip,lat,lon,timezone,isp,query&lang=pt`);
+        const data = await res.json();
         if (data.status === 'success') {
             return {
                 ip: data.query,
@@ -47,11 +69,33 @@ async function getLocationByIP(ip) {
                 google_maps: `https://www.google.com/maps?q=${data.lat},${data.lon}`
             };
         }
-        return null;
-    } catch (err) {
-        console.error('Erro na API de IP:', err);
-        return null;
+    } catch (e) {
+        console.log('[API 2] ip-api.com falhou:', e.message);
     }
+
+    // TENTATIVA 3: ipwho.is (grátis, sem limite)
+    try {
+        const res = await fetch(`https://ipwho.is/${cleanIP}`);
+        const data = await res.json();
+        if (data.success) {
+            return {
+                ip: data.ip,
+                latitude: data.latitude,
+                longitude: data.longitude,
+                cidade: data.city,
+                estado: data.region,
+                pais: data.country,
+                cep: data.postal,
+                fuso_horario: data.timezone?.id,
+                provedor: data.connection?.isp,
+                google_maps: `https://www.google.com/maps?q=${data.latitude},${data.longitude}`
+            };
+        }
+    } catch (e) {
+        console.log('[API 3] ipwho.is falhou:', e.message);
+    }
+
+    return { ip: cleanIP, erro: 'Todas as APIs falharam' };
 }
 
 // =============================================
@@ -59,23 +103,29 @@ async function getLocationByIP(ip) {
 // =============================================
 app.use(async (req, res, next) => {
     if (req.path === '/' && req.method === 'GET') {
-        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
-        const location = await getLocationByIP(ip);
+        try {
+            const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+            console.log(`[VISITA] IP detectado: ${ip}`);
 
-        const logs = JSON.parse(fs.readFileSync(LOG_FILE, 'utf8'));
+            const location = await getLocationByIP(ip);
 
-        const entry = {
-            id: logs.length + 1,
-            ...location,
-            user_agent: req.headers['user-agent'],
-            referer: req.headers['referer'] || null,
-            idioma: req.headers['accept-language']?.split(',')[0] || null,
-            timestamp: new Date().toISOString()
-        };
+            const logs = JSON.parse(fs.readFileSync(LOG_FILE, 'utf8'));
 
-        logs.push(entry);
-        fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2));
-        console.log(`[LOG #${entry.id}] ${entry.cidade || 'Desconhecido'} - ${entry.ip}`);
+            const entry = {
+                id: logs.length + 1,
+                ...location,
+                user_agent: req.headers['user-agent'],
+                referer: req.headers['referer'] || null,
+                idioma: req.headers['accept-language']?.split(',')[0] || null,
+                timestamp: new Date().toISOString()
+            };
+
+            logs.push(entry);
+            fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2));
+            console.log(`[LOG #${entry.id}] ${entry.cidade || 'Desconhecido'} - ${entry.ip}`);
+        } catch (err) {
+            console.error('[ERRO] Falha ao logar visita:', err);
+        }
     }
     next();
 });
@@ -140,12 +190,13 @@ app.delete('/api/log', (req, res) => {
 app.listen(PORT, () => {
     console.log(`
   ┌──────────────────────────────────────────────┐
-  │   GEO LOGGER v2.0 — porta ${PORT}                │
+  │   GEO LOGGER v2.1 — porta ${PORT}                │
   │                                              │
   │   Página:  http://localhost:${PORT}               │
   │   Painel:  http://localhost:${PORT}/log           │
   │   JSON:    http://localhost:${PORT}/log.json      │
   │                                              │
+  │   ✓ 3 APIs de fallback (ipapi, ip-api, ipwho)│
   │   ✓ Captura por IP (automática, sem popup)   │
   │   ✓ Captura por GPS (se permitir, + preciso) │
   └──────────────────────────────────────────────┘
